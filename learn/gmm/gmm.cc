@@ -5,6 +5,7 @@
 #define OMP_DBG
 #define DMLC_USE_CXX11 1
 #include <algorithm>
+#include <armadillo>
 #include <vector>
 #include <cmath>
 #include <rabit.h>
@@ -12,7 +13,10 @@
 #include <dmlc/data.h>
 #include <dmlc/logging.h>
 #include <omp.h>
-
+using arma::fvec;
+using arma::fmat;
+using arma::det;
+using arma::conv_to;
 using namespace rabit;
 using namespace dmlc;
 /*!\brief computes a random number modulo the value */
@@ -88,6 +92,61 @@ class Model : public dmlc::Serializable {
     }
   }
 };
+class Gaussian{
+	arma::fvec mu;
+	arma::fmat sigma;
+public:
+	Gaussian(){}
+	float get_prob(arma::fvec& x) {
+		const float pi = 3.14;
+		int n = mu.size();
+		fvec x_mu = x - mu;
+		double det_sigma = 0;
+		det_sigma = det(sigma);
+		//consider diag sigma
+		return 1.0 / (pow(2 * pi, n/2) * sqrt(det_sigma)) * 
+			exp(conv_to<float>::from(-0.5 * x_mu.t() * inv(sigma) * x_mu));
+	}
+	float get_log_prob(arma::fvec& x) {
+		const float pi = 3.14;
+		int n = mu.size();
+		fvec x_mu = x - mu;
+		double logdet_sigma = 0;
+		logdet_sigma = log(det(sigma));
+		return -n/2 * log (2 * pi) - 0.5 * logdet_sigma - conv_to<float>::from(-0.5 * x_mu.t() * inv(sigma) * x_mu);
+		//consider diag sigma
+		return 0;
+	}
+};
+
+class GMMModel : public dmlc::Serializable {
+
+public:
+	std::vector<Gaussian> gmms;
+	fmat r_ki;
+	static void InitModel(dmlc::RowBlockIter<unsigned> *data, GMMModel& gmm_model) {
+		//init r_{ik} from kmeans, which are indicators
+		std::vector<int> clst_id_kmeans; 
+		data->BeforeFirst();
+		CHECK(data->Next()) << "dataset is empty";
+		const RowBlock<unsigned> &block = data->Value();
+		int K = gmm_model.r_ki.n_rows;
+		gmm_model.r_ki.zeros();
+    int index = Random(block.size);
+    Row<unsigned> v = block[index];
+    for (unsigned j = 0; j < v.length; ++j) {
+			int k = v.label; //assuming label is cluster_id
+			gmm_model.r_ki(k, j) = 1;
+    }
+	}
+	
+	template<typename FloatType>
+	static void normalize_in_logscale(FloatType* vec_in_log, size_t n) {
+
+	}
+	static void sparse_sum(fvec& sum, dmlc::RowBlockIter<unsigned> *data)
+};
+
 // initialize the cluster centroids
 inline void InitCentroids(dmlc::RowBlockIter<unsigned> *data,
                           Matrix *centroids) {
@@ -171,32 +230,11 @@ int main(int argc, char *argv[]) {
   const unsigned num_feat = static_cast<unsigned>(model.centroids.ncol);
 
   // matrix to store the result
-  Matrix temp;
+	auto calc_mu = [&]() {
+
+	};
   for (int r = iter; r < max_iter; ++r) {
-    temp.Init(num_cluster, num_feat + 1, 0.0f);
-    auto lazy_get_centroid = [&]()
-    {
-      // lambda function used to calculate the data if necessary
-      // this function may not be called when the result can be directly recovered
-      double dist_sum = 0;
-      double dist_tmp;
-      data->BeforeFirst();
-      while (data->Next()) {
-        const auto &batch = data->Value();
-        for (size_t i = 0; i < batch.size; ++i) {
-          auto v = batch[i];
-          size_t k = GetCluster(model.centroids, v, &dist_tmp);
-          dist_sum += dist_tmp;
-          // temp[k] += v
-          for (size_t j = 0; j < v.length; ++j) {
-            temp[k][v.index[j]] += v.get_value(j);
-          }
-          // use last column to record counts
-          temp[k][num_feat] += 1.0f;
-        }
-      }
-      printf("total dist = %lf\n", dist_sum);
-    };
+
     auto omp_get_centroid = [&]()
     {
       // lambda function used to calculate the data if necessary
